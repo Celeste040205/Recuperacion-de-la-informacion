@@ -66,17 +66,6 @@ class SearchRequest(BaseModel):
     model: str  # "bm25" o "tfidf"
     top_k: int = 10
 
-@app.get("/")
-def read_root():
-    return {
-        "message": "Bienvenido al servicio web de Recuperación de Información - NFCorpus",
-        "endpoints_disponibles": {
-            "health": "/health (GET)",
-            "search": "/search (POST)",
-            "documentacion": "/docs (GET)"
-        }
-    }
-
 # --- NUEVO: Endpoint /health requerido por el examen ---
 @app.get("/health")
 def health_check():
@@ -108,15 +97,15 @@ def search_endpoint(req: SearchRequest):
         d_id = doc_ids[idx]
         results.append({
             "rank": rank,
-            "document_id": d_id,
+            "document_id": d_id,  # Debe llamarse exactamente 'document_id'
             "score": float(scores[idx]),
             "title": documents[d_id]["title"],
             "snippet": documents[d_id]["text"][:200] + "..."
         })
         
     return {
-        "model": model_name,
-        "results": results
+        "model": model_name,  # Debe incluir el modelo utilizado
+        "results": results     # Debe incluir la lista de resultados ordenados
     }
     
 if __name__ == "__main__":
