@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+datasets
+scikit-learn
+rank_bm25
+pandas
+numpy
+nltk
