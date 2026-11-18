@@ -9,20 +9,21 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from rank_bm25 import BM25Okapi
 
-# Descargar recursos de NLTK de forma segura
+# Descargar recursos de NLTK
 nltk.download('stopwords')
 stop_words = set(stopwords.words('english'))
 stemmer = PorterStemmer()
 
-app = FastAPI(title="NFCorpus IR Service", version="1.0")
+app = FastAPI(title="NFCorpus IR Service - Vercel", version="1.0")
 
-# Variables globales para los índices y datos
+# Variables globales que se inicializarán solo cuando se necesiten
 documents = {}
 doc_corpus_texts = []
 doc_ids = []
 tfidf_vectorizer = None
 tfidf_matrix = None
 bm25_index = None
+is_initialized = False
 
 def preprocess_text(text):
     if not text:
@@ -33,10 +34,13 @@ def preprocess_text(text):
     tokens = [stemmer.stem(word) for word in tokens if word not in stop_words and len(word) > 2]
     return " ".join(tokens)
 
-@app.on_event("startup")
-def load_and_index_data():
-    global documents, doc_corpus_texts, doc_ids, tfidf_vectorizer, tfidf_matrix, bm25_index
-    print("Cargando corpus NFCorpus en el servidor...")
+# Función para cargar e indexar bajo demanda (evita el timeout en Vercel)
+def initialize_data():
+    global documents, doc_corpus_texts, doc_ids, tfidf_vectorizer, tfidf_matrix, bm25_index, is_initialized
+    if is_initialized:
+        return
+
+    print("Cargando corpus NFCorpus bajo demanda...")
     corpus_ds = load_dataset("BeIR/nfcorpus", "corpus", split="corpus")
     
     for item in corpus_ds:
@@ -53,30 +57,49 @@ def load_and_index_data():
         doc_corpus_texts.append(documents[doc_id]["processed"])
         doc_ids.append(doc_id)
 
-    # Construir índices TF-IDF y BM25
+    # Construir índices
     tfidf_vectorizer = TfidfVectorizer(max_features=20000)
     tfidf_matrix = tfidf_vectorizer.fit_transform(doc_corpus_texts)
     
     tokenized_corpus = [doc.split() for doc in doc_corpus_texts]
     bm25_index = BM25Okapi(tokenized_corpus)
-    print("¡Indexación completada exitosamente en el servidor!")
+    is_initialized = True
+    print("¡Indexación completada con éxito!")
 
 class SearchRequest(BaseModel):
     query: str
     model: str  # "bm25" o "tfidf"
     top_k: int = 10
 
-# --- NUEVO: Endpoint /health requerido por el examen ---
+@app.get("/")
+def read_root():
+    return {
+        "message": "Bienvenido al servicio web de Recuperación de Información - NFCorpus (Vercel)",
+        "endpoints_disponibles": {
+            "health": "/health (GET)",
+            "search": "/search (POST)",
+            "documentacion": "/docs (GET)"
+        }
+    }
+
 @app.get("/health")
 def health_check():
+    # Si aún no se inicializa, devuelve un estado de carga o inicializa de una vez
     return {
         "status": "ok",
         "corpus": "nfcorpus",
-        "documents_indexed": len(doc_ids)
+        "initialized": is_initialized,
+        "documents_indexed": len(doc_ids) if is_initialized else 0
     }
 
 @app.post("/search")
 def search_endpoint(req: SearchRequest):
+    # Asegurar que los datos estén cargados antes de buscar
+    try:
+        initialize_data()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error cargando el corpus: {str(e)}")
+
     model_name = req.model.lower().strip()
     if model_name not in ["tfidf", "bm25"]:
         raise HTTPException(status_code=400, detail="Modelo no válido. Use 'tfidf' o 'bm25'.")
@@ -97,17 +120,13 @@ def search_endpoint(req: SearchRequest):
         d_id = doc_ids[idx]
         results.append({
             "rank": rank,
-            "document_id": d_id,  # Debe llamarse exactamente 'document_id'
+            "document_id": d_id,
             "score": float(scores[idx]),
             "title": documents[d_id]["title"],
             "snippet": documents[d_id]["text"][:200] + "..."
         })
         
     return {
-        "model": model_name,  # Debe incluir el modelo utilizado
-        "results": results     # Debe incluir la lista de resultados ordenados
+        "model": model_name,
+        "results": results
     }
-    
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
